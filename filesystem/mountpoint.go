@@ -78,6 +78,7 @@ func unescapeString(str string) string {
 // field directly.  This is necessary to handle a rootfs that was mounted via
 // the kernel command line, since mountinfo always shows /dev/root for that.
 // This assumes that the device nodes are in the standard location.
+// TODO: need to fix other callers
 func getDeviceName(num DeviceNumber) string {
 	linkPath := fmt.Sprintf("/sys/dev/block/%v", num)
 	if target, err := os.Readlink(linkPath); err == nil {
@@ -135,7 +136,13 @@ func parseMountInfoLine(line string) *Mount {
 		}
 	}
 	mnt.FilesystemType = unescapeString(fields[n+1])
-	mnt.Device = getDeviceName(mnt.DeviceNumber)
+	device := unescapeString(fields[n+2])
+	if (device == "/dev/root") {
+		// TODO: if major is 0, need to check /proc/cmdline.
+		mnt.Device = getDeviceName(mnt.DeviceNumber)
+	} else {
+		mnt.Device = device
+	}
 	return mnt
 }
 

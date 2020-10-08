@@ -40,23 +40,6 @@ func makeTableWriter(w io.Writer, header string) *tabwriter.Writer {
 	return tableWriter
 }
 
-// encryptionStatus will be printed in the ENCRYPTION column. An empty string
-// indicates the filesystem should not be printed.
-func encryptionStatus(err error) string {
-	if err == nil {
-		return "supported"
-	}
-	switch err.(type) {
-	case *filesystem.ErrEncryptionNotEnabled:
-		return "not enabled"
-	case *filesystem.ErrEncryptionNotSupported:
-		return "not supported"
-	default:
-		// Unknown error regarding support
-		return ""
-	}
-}
-
 func yesNoString(b bool) string {
 	if b {
 		return "Yes"
@@ -100,16 +83,22 @@ func writeGlobalStatus(w io.Writer) error {
 
 	t := makeTableWriter(w, "MOUNTPOINT\tDEVICE\tFILESYSTEM\tENCRYPTION\tFSCRYPT")
 	for _, mount := range mounts {
-		// Only print mountpoints backed by devices or using fscrypt.
+		// Only print mountpoints supporting or using fscrypt.
 		usingFscrypt := mount.CheckSetup() == nil
-		if !usingFscrypt && mount.Device == "" {
-			continue
-		}
-
-		// Only print a mountpoint if we can determine its support.
 		supportErr := mount.CheckSupport()
-		supportString := encryptionStatus(supportErr)
-		if supportString == "" {
+		var supportString string
+		switch supportErr.(type) {
+		case nil:
+			supportString = "supported"
+		case *filesystem.ErrEncryptionNotEnabled:
+			supportString = "not enabled"
+		case *filesystem.ErrEncryptionNotSupported:
+			if (usingFscrypt) {
+				supportString = "not supported"
+			} else {
+				continue
+			}
+		default:
 			log.Print(supportErr)
 			continue
 		}
