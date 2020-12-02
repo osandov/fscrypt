@@ -35,9 +35,11 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	"golang.org/x/sys/unix"
 )
 
 var (
+	mountsByPath map[string]*Mount
 	// This map holds data about the state of the system's filesystems.
 	//
 	// It only contains one Mount per filesystem, even if there are
@@ -266,7 +268,7 @@ func findMainMount(filesystemMounts []*Mount) *Mount {
 
 // This is separate from loadMountInfo() only for unit testing.
 func readMountInfo(r io.Reader) error {
-	mountsByPath := make(map[string]*Mount)
+	mountsByPath = make(map[string]*Mount)
 	mountsByDevice = make(map[DeviceNumber]*Mount)
 
 	scanner := bufio.NewScanner(r)
@@ -365,13 +367,37 @@ func FindMount(path string) (*Mount, error) {
 	if err := loadMountInfo(); err != nil {
 		return nil, err
 	}
-	deviceNumber, err := getNumberOfContainingDevice(path)
+
+	file, err := os.OpenFile(path, unix.O_PATH | unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
+
+	var stat unix.Stat_t
+	err = unix.Fstat(int(file.Fd()), &stat)
+	if err != nil {
+		return nil, err
+	}
+	deviceNumber := DeviceNumber(stat.Dev)
+
 	mnt, ok := mountsByDevice[deviceNumber]
 	if !ok {
-		return nil, errors.Errorf("couldn't find mountpoint containing %q", path)
+		realPath, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", file.Fd()))
+		if err != nil {
+			return nil, err
+		}
+		for {
+			mnt, ok = mountsByPath[realPath]
+			if ok {
+				break
+			}
+			if realPath == "/" {
+				return nil, errors.Errorf("couldn't find mountpoint containing %q", path)
+			}
+			realPath = filepath.Dir(realPath)
+		}
+		mnt = mountsByDevice[mnt.DeviceNumber]
 	}
 	if mnt == nil {
 		return nil, filesystemLacksMainMountError(deviceNumber)
